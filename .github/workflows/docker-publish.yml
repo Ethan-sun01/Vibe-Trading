@@ -5,6 +5,12 @@ on:
     types: [published]
   push:
     branches: [main]
+    # Only the `edge` build runs on main pushes; skip it for doc-only commits.
+    # Release builds (the real images) always fire via the `release` trigger above.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'wiki/**'
 
 permissions:
   contents: read

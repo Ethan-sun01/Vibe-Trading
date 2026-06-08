@@ -50,7 +50,7 @@
 
 ## 📰 News
 
-- **2026-06-08** 🐳 **One-pull Docker deploy + Gemini 3.x multi-turn fix**: You can now run the full stack without cloning the repo or building locally — a release CI workflow publishes a multi-arch (`amd64` + `arm64`) image to **GHCR**, and a new `docker-compose.prod.yml` pulls `ghcr.io/hkuds/vibe-trading` directly (README **Path E**, tested on a Synology NAS) ([#187](https://github.com/HKUDS/Vibe-Trading/pull/187), closes [#183](https://github.com/HKUDS/Vibe-Trading/issues/183), thanks @KaiLuettmann). This also **completes the Gemini 3.x thinking-model fix**: the 6/05 round-trip ([#176](https://github.com/HKUDS/Vibe-Trading/pull/176)) only covered in-memory history, but the real agent loop replays history as OpenAI-format dicts where LangChain dropped the per-tool-call `thought_signature` before the request was built — so multi-turn tool calling still 400'd with `missing thought_signature`. It is now re-attached at the single `_convert_input` chokepoint both `invoke` and `stream` pass through (parallel calls, where only the first of N is signed, included) ([#184](https://github.com/HKUDS/Vibe-Trading/pull/184), thanks @ngoanpv).
+- **2026-06-08** 🔧 **Gemini 3.x multi-turn tool-calling fix**: This completes the Gemini 3.x thinking-model fix. The 6/05 round-trip ([#176](https://github.com/HKUDS/Vibe-Trading/pull/176)) only covered in-memory history, but the real agent loop replays history as OpenAI-format dicts where LangChain dropped the per-tool-call `thought_signature` before the request was built — so multi-turn tool calling still 400'd with `missing thought_signature`. It is now re-attached at the single `_convert_input` chokepoint both `invoke` and `stream` pass through (parallel calls, where only the first of N is signed, included) ([#184](https://github.com/HKUDS/Vibe-Trading/pull/184), thanks @ngoanpv).
 - **2026-06-07** 🐝 **Live swarm status in the chat timeline**: When the agent launches a multi-agent swarm (investment committee, quant desk, risk committee, …), the chat now renders an inline **status card** that streams each worker's state — waiting / running / done / failed / blocked / retrying — in real time, the same per-agent visibility the standalone swarm dashboard already had. Runtime events are bridged into the session SSE stream without changing the existing `/swarm/runs` API, and a finished card rehydrates from the final `run_swarm` result on reconnect or history replay ([#188](https://github.com/HKUDS/Vibe-Trading/pull/188), thanks @BillDin). Preset routing also got sharper: an explicitly named preset (e.g. `investment_committee`, with or without underscores) now wins over keyword scoring, and the bare `IV` derivatives keyword no longer false-matches inside ordinary words like "g**iv**en" ([#189](https://github.com/HKUDS/Vibe-Trading/pull/189), thanks @BillDin).
 - **2026-06-06** ⚖️ **Alpha compare — head-to-head across CLI, Web UI, REST & agent**: A new `alpha compare` benches a hand-picked shortlist of Alpha Zoo alphas against each other on a universe and period, then ranks them by IC mean/std, IR, IC-positive ratio or sample count — each with its gap to the leader. Unlike a full-zoo bench it evaluates **only the alphas you name** (a new `run_bench(only=…)` subset filter), so comparing three alphas no longer scores all 191 in their zoo. One shared core powers every surface: `vibe-trading alpha compare <id1> <id2> … --sort ir` (CLI), a **Compare view** in the Alpha Zoo Web UI (tick alphas in the catalogue → one-click compare with a streamed ranking table), `POST /alpha/compare` + SSE (REST), and a read-only `alpha_compare` agent tool (**47 tools** now).
 <details>
@@ -370,7 +370,6 @@ vibe-trading-mcp               # start MCP server (stdio)
 | **B. Local install** | Development, full CLI access | 5 min |
 | **C. MCP plugin** | Plug into your existing agent | 3 min |
 | **D. ClawHub** | One command, no cloning | 1 min |
-| **E. Pre-built image (GHCR)** | Home server / NAS, no Git needed | 2 min |
 
 ### Prerequisites
 
@@ -446,36 +445,6 @@ npx clawhub@latest install vibe-trading --force
 ```
 
 The skill + MCP config is downloaded into your agent's skills directory. See [ClawHub install](#-mcp-plugin) for details.
-
-### Path E: Pre-built image (no Git required)
-
-Pull the latest release image directly from the GitHub Container Registry — no repository clone, no local build. Ideal for home servers and Synology NAS.
-
-**1. Create a `.env` file** with your LLM provider credentials (see [Environment Variables](#-environment-variables) for all options):
-
-```bash
-# Minimal example — OpenRouter
-LANGCHAIN_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-LANGCHAIN_MODEL_NAME=deepseek/deepseek-v4-pro
-```
-
-**2. Download the production compose file:**
-
-```bash
-curl -O https://raw.githubusercontent.com/HKUDS/Vibe-Trading/main/docker-compose.prod.yml
-```
-
-**3. Start the container:**
-
-```bash
-docker compose -f docker-compose.prod.yml up -d
-```
-
-Open `http://localhost:8899`. The frontend is baked into the image and served at the same port — no separate build step required.
-
-> **Data persistence:** Run data (agent runs and sessions) is stored in named Docker volumes (`vibe-runs`, `vibe-sessions`) and survives container recreation.
 
 ---
 
@@ -1045,8 +1014,7 @@ Vibe-Trading/
 │       └── stores/                 #   Zustand state management
 │
 ├── Dockerfile                      # Multi-stage build
-├── docker-compose.yml              # One-command deploy (build from source)
-├── docker-compose.prod.yml         # Buildless deploy from GHCR pre-built image
+├── docker-compose.yml              # One-command deploy
 ├── pyproject.toml                  # Package config + CLI entrypoint
 ├── tools/                          # Repo-level CI helpers
 │   └── ci_grep_gates.sh            # rejects yaml.load / trademark / per-stock-data leaks

@@ -15,6 +15,7 @@ import {
 import { StrategyBuilder } from "@/components/options/StrategyBuilder";
 import { GreeksCards } from "@/components/options/GreeksCards";
 import { OptionsChainTable } from "@/components/options/OptionsChainTable";
+import { VolSurfacePanel } from "@/components/options/VolSurfacePanel";
 import { OptionsPayoffChart } from "@/components/charts/OptionsPayoffChart";
 import { OptionsScenarioMatrix } from "@/components/charts/OptionsScenarioMatrix";
 
@@ -223,6 +224,12 @@ export function OptionsLab() {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* Vol surface + Greeks dashboard */}
+      <section className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
+        <div className="mb-3 text-sm font-semibold">{t("options.surface.title")}</div>
+        <VolSurfacePanel />
       </section>
 
       {/* Live US options chain */}

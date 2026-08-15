@@ -64,6 +64,7 @@ __all__ = ["ALLOWED_MODULES", "QuantlibCallTool"]
 #: caller sends is ever handed to ``importlib``.
 ALLOWED_MODULES: dict[str, str] = {
     "options": "src.quantlib.options",
+    "volsurface": "src.quantlib.volsurface",
     "fixedincome": "src.quantlib.fixedincome",
     "credit": "src.quantlib.credit",
     "timeseries": "src.quantlib.timeseries",

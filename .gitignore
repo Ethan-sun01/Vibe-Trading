@@ -117,3 +117,6 @@ bench_report.json
 # gh CLI config (contains auth token)
 .gh/
 
+# npm cache redirected into the workspace by the sandboxed toolchain
+.npm-cache/
+

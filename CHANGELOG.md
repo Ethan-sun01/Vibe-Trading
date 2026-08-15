@@ -5,6 +5,27 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Vol surface + Greeks dashboard for the Options Lab**: a new
+  `src.quantlib.volsurface` module fits a raw-SVI smile to observed
+  (strike, expiry, IV) quotes per expiry (scipy least-squares, data-driven
+  initial guess, fit diagnostics with RMSE / max residual / the Gatheral
+  `wings_ok` bound) and interpolates the surface in time by total variance
+  `w = sigma_iv^2 * T` — flat extrapolation outside the fitted range, reported
+  in `limitations` rather than hidden. `VolSurface.greeks()` reprices the
+  five Black-Scholes Greeks through the fitted surface IV, so the skew bends
+  delta/gamma/vega instead of a single ATM vol. Two REST routes wrap the math:
+  `POST /options/surface` fits caller-supplied quotes, and
+  `POST /options/surface/synthetic` fabricates a deterministic stylised smile
+  (`smile_quotes`: ATM level + log-moneyness skew/curvature, clamped) so the
+  demo works offline; both return per-expiry fits, the strike × expiry IV grid
+  and optional surface-consistent Greeks curves. `volsurface` joins the
+  `quantlib_call` module allowlist, so the pure functions are reachable from
+  the CLI, Web UI, REST API and MCP. The Web UI gains a **Vol Surface** panel
+  (synthetic smile / pasted CSV quotes / live Yahoo chain modes) with an IV
+  heatmap, per-expiry SVI fit table and a five-Greek curves dashboard, in all
+  six UI languages.
+
 ## [0.1.13] — 2026-08-10
 
 Rolls up 408 commits / 162 merged pull requests since 0.1.12.

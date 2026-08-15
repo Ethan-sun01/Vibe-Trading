@@ -414,3 +414,255 @@ export function ivLabel(iv: number): string {
   const pct = fractionToPct(iv);
   return `${Number(pct.toFixed(2)).toLocaleString()}%`;
 }
+
+// ---------------------------------------------------------------------------
+// API contract — vol surface (POST /options/surface, /options/surface/synthetic)
+// ---------------------------------------------------------------------------
+
+/**
+ * One observed (strike, expiry, IV) point fed to the surface fitter.
+ * `implied_volatility` is an annualised FRACTION (0.25 = 25%).
+ */
+export interface SurfaceQuote {
+  strike: number;
+  expiry_days: number;
+  implied_volatility: number;
+}
+
+export interface SurfaceSviParams {
+  a: number;
+  b: number;
+  rho: number;
+  m0: number;
+  sigma: number;
+}
+
+/** Fit diagnostics for one expiry of the surface. */
+export interface SurfaceExpiryFit {
+  expiry_days: number;
+  n_quotes: number;
+  rmse: number;
+  max_residual: number;
+  wings_ok: boolean;
+  params: SurfaceSviParams;
+}
+
+export interface VolSurfaceGrid {
+  strikes: number[];
+  /** Expiration days, one per row of `iv`. */
+  expiries: number[];
+  /** One row per expiry, each aligned with `strikes`. Annualised fractions. */
+  iv: number[][];
+}
+
+/** Surface-consistent call Greeks across the strike grid for one expiry. */
+export interface SurfaceGreeksGrid {
+  expiry_days: number;
+  strikes: number[];
+  delta: number[];
+  gamma: number[];
+  theta: number[];
+  vega: number[];
+  rho: number[];
+}
+
+export interface VolSurfaceResponse {
+  status: "ok";
+  spot: number;
+  risk_free_rate: number;
+  dividend_yield: number;
+  expiries: SurfaceExpiryFit[];
+  grid: VolSurfaceGrid;
+  greeks: SurfaceGreeksGrid | null;
+  limitations: string[];
+}
+
+export interface VolSurfaceQuotesRequest {
+  spot: number;
+  quotes: SurfaceQuote[];
+  risk_free_rate: number;
+  dividend_yield: number;
+  strike_min?: number;
+  strike_max?: number;
+  strike_points: number;
+  expiries?: number[];
+  greeks_expiry_days?: number;
+}
+
+export interface SyntheticSurfaceRequest {
+  spot: number;
+  expiry_days: number[];
+  strike_min: number;
+  strike_max: number;
+  strike_points: number;
+  atm_iv: number;
+  /** Log-moneyness linear coefficient (fraction, e.g. -0.2). */
+  skew: number;
+  /** Log-moneyness quadratic coefficient (fraction, e.g. 0.1). */
+  curvature: number;
+  risk_free_rate: number;
+  dividend_yield: number;
+  greeks_expiry_days?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Vol-surface UI parameter model (percent convention)
+// ---------------------------------------------------------------------------
+
+/**
+ * Surface builder parameters as the USER types them: ATM IV, skew, curvature
+ * and strike range are entered as PERCENTS and converted to fractions only
+ * when the request body is built, matching the payoff builder convention.
+ */
+export interface SurfaceLabParams {
+  spot: number;
+  /** Percent: 25 = 25% annualised ATM IV. Sent as 0.25. */
+  atm_iv_pct: number;
+  /** Percent: -20 = -0.2 log-moneyness linear coefficient. */
+  skew_pct: number;
+  /** Percent: 10 = 0.1 log-moneyness quadratic coefficient. */
+  curvature_pct: number;
+  /** Percent band around spot covered by the strike grid (±30 = 70…130). */
+  strike_range_pct: number;
+  /** Expiration days of the fitted smiles. */
+  expiries: number[];
+  /** Expiry (days) whose Greeks curves are computed; null disables them. */
+  greeks_expiry_days: number | null;
+  /** Strike-grid resolution. */
+  strike_points: number;
+}
+
+export const DEFAULT_SURFACE_PARAMS: SurfaceLabParams = {
+  spot: 100,
+  atm_iv_pct: 25,
+  skew_pct: -20,
+  curvature_pct: 10,
+  strike_range_pct: 30,
+  expiries: [30, 60, 90, 180],
+  greeks_expiry_days: 60,
+  strike_points: 41,
+};
+
+/**
+ * Validate surface inputs against the backend contract and build the
+ * synthetic request. Returns null when any input is out of bounds (the page
+ * then skips the debounced call). Display-only guard — the backend stays
+ * authoritative.
+ */
+export function buildSyntheticSurfaceRequest(
+  p: SurfaceLabParams,
+): SyntheticSurfaceRequest | null {
+  if (!Number.isFinite(p.spot) || p.spot <= 0) return null;
+  if (!Number.isFinite(p.atm_iv_pct) || p.atm_iv_pct <= 0) return null;
+  if (!Number.isFinite(p.strike_range_pct) || p.strike_range_pct <= 0 || p.strike_range_pct >= 100) {
+    return null;
+  }
+  if (!Number.isFinite(p.skew_pct)) return null;
+  if (!Number.isFinite(p.curvature_pct)) return null;
+  if (!Number.isInteger(p.strike_points) || p.strike_points < 5 || p.strike_points > 101) return null;
+  if (p.expiries.length === 0) return null;
+  for (const d of p.expiries) {
+    if (!Number.isFinite(d) || d <= 0) return null;
+  }
+  if (p.greeks_expiry_days !== null && (!Number.isFinite(p.greeks_expiry_days) || p.greeks_expiry_days <= 0)) {
+    return null;
+  }
+  const band = p.strike_range_pct / 100;
+  return {
+    spot: p.spot,
+    expiry_days: [...p.expiries].sort((a, b) => a - b),
+    strike_min: Number((p.spot * (1 - band)).toFixed(4)),
+    strike_max: Number((p.spot * (1 + band)).toFixed(4)),
+    strike_points: p.strike_points,
+    atm_iv: pctToFraction(p.atm_iv_pct),
+    skew: pctToFraction(p.skew_pct),
+    curvature: pctToFraction(p.curvature_pct),
+    risk_free_rate: 0.05,
+    dividend_yield: 0,
+    ...(p.greeks_expiry_days !== null ? { greeks_expiry_days: p.greeks_expiry_days } : {}),
+  };
+}
+
+/**
+ * Build the quotes-mode request. `quotes` must already be validated
+ * (see {@link surfaceQuotesValid}); returns null on a bad spot or empty set.
+ */
+export function buildSurfaceQuotesRequest(
+  spot: number,
+  quotes: SurfaceQuote[],
+  opts: { greeks_expiry_days?: number | null; strike_points?: number } = {},
+): VolSurfaceQuotesRequest | null {
+  if (!Number.isFinite(spot) || spot <= 0) return null;
+  if (quotes.length < 4) return null;
+  const strike_points = opts.strike_points ?? 41;
+  if (!Number.isInteger(strike_points) || strike_points < 5 || strike_points > 101) return null;
+  return {
+    spot,
+    quotes,
+    risk_free_rate: 0.05,
+    dividend_yield: 0,
+    strike_points,
+    ...(opts.greeks_expiry_days !== null && opts.greeks_expiry_days !== undefined
+      ? { greeks_expiry_days: opts.greeks_expiry_days }
+      : {}),
+  };
+}
+
+/** True when a quote set has enough valid points to fit a surface. */
+export function surfaceQuotesValid(quotes: SurfaceQuote[]): boolean {
+  return (
+    quotes.length >= 4 &&
+    quotes.every(
+      (q) =>
+        Number.isFinite(q.strike) && q.strike > 0 &&
+        Number.isFinite(q.expiry_days) && q.expiry_days > 0 &&
+        Number.isFinite(q.implied_volatility) && q.implied_volatility > 0,
+    )
+  );
+}
+
+export interface SurfaceCsvParseResult {
+  quotes: SurfaceQuote[];
+  errors: string[];
+}
+
+/**
+ * Parse "strike,expiry_days,iv_fraction" CSV lines (one per row) into surface
+ * quotes. Blank lines and lines starting with `#` are ignored; a malformed row
+ * is recorded in `errors` and skipped rather than failing the whole paste, so
+ * one bad line cannot kill a 50-row chain export.
+ */
+export function parseSurfaceQuotesCsv(text: string): SurfaceCsvParseResult {
+  const quotes: SurfaceQuote[] = [];
+  const errors: string[] = [];
+  const lines = text.split(/\r?\n/);
+  lines.forEach((raw, i) => {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) return;
+    const parts = line.split(",").map((s) => s.trim());
+    if (parts.length !== 3) {
+      errors.push(`${i + 1}: expected "strike,expiry_days,iv", got ${parts.length} column(s)`);
+      return;
+    }
+    const strike = Number(parts[0]);
+    const expiryDays = Number(parts[1]);
+    const iv = Number(parts[2]);
+    if (!Number.isFinite(strike) || strike <= 0) {
+      errors.push(`${i + 1}: strike must be a positive number`);
+      return;
+    }
+    if (!Number.isFinite(expiryDays) || expiryDays <= 0) {
+      errors.push(`${i + 1}: expiry_days must be a positive number`);
+      return;
+    }
+    if (!Number.isFinite(iv) || iv <= 0) {
+      errors.push(`${i + 1}: implied_volatility must be a positive fraction like 0.25`);
+      return;
+    }
+    quotes.push({ strike, expiry_days: expiryDays, implied_volatility: iv });
+  });
+  return { quotes, errors };
+}
+
+/** Default expiry choices offered by the surface panel (calendar days). */
+export const SURFACE_EXPIRY_OPTIONS = [30, 60, 90, 180, 365];

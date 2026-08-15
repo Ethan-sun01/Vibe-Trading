@@ -4,6 +4,9 @@ import type {
   OptionsChainResponse,
   OptionsPayoffRequest,
   OptionsPayoffResponse,
+  SyntheticSurfaceRequest,
+  VolSurfaceQuotesRequest,
+  VolSurfaceResponse,
 } from "@/lib/options";
 
 const BASE = "";
@@ -273,6 +276,16 @@ export const api = {
     if (expiration !== undefined) q.set("expiration", String(expiration));
     return request<OptionsChainResponse>(`/options/chain?${q.toString()}`);
   },
+  analyzeVolSurface: (body: VolSurfaceQuotesRequest) =>
+    request<VolSurfaceResponse>("/options/surface", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  analyzeSyntheticSurface: (body: SyntheticSurfaceRequest) =>
+    request<VolSurfaceResponse>("/options/surface/synthetic", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).
   // commit is the ONLY action that writes a mandate; halt trips the kill switch.
